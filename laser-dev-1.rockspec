@@ -1,17 +1,21 @@
 package = "laser"
 version = "dev-1"
 source = {
-    url = "*** please add URL for source tarball, zip or repository here ***"
+    url = "https://github.com/estoneman/laser.git",
+    branch = "main"
 }
 description = {
     summary = "Personal DJ Workflow Automation",
-    homepage = "*** please enter a project homepage ***",
+    homepage = "https://github.com/estoneman/laser.git",
     license = "MIT"
 }
 dependencies = {
-    "lua >= 5.1, < 5.5"
+    "lua >= 5.1, < 5.5",
+    "inspect >= 3.1"
 }
 build = {
     type = "builtin",
-    modules = {}
+    modules = {
+        main = "src/main.lua"
+    }
 }
