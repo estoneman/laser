@@ -1,12 +1,23 @@
 -- src/main.lua
 local argparse = require("argparse")
 
-local capacity = 90
+---@type integer?
+local minDiskSpace
+
+if not os.getenv('PERCENT_DISK_REM') then
+    minDiskSpace = 90
+else
+    minDiskSpace = tonumber(os.getenv('PERCENT_DISK_REM'))
+    if not minDiskSpace then
+        print('[error] invalid percentage (should be number)')
+        os.exit(1)
+    end
+end
 
 ---capture command output into stdout
 ---@param cmd string
 ---@param raw boolean
-local function cmdOutputCapture(cmd, raw)
+local function capture(cmd, raw)
     local proc = assert(io.popen(cmd, 'r'))
     local out = assert(proc:read('*a'))
 
@@ -20,10 +31,39 @@ local function cmdOutputCapture(cmd, raw)
     return out
 end
 
+---check if directory is taking up too much space on its mountpoint
+---@param dir string
+---@return boolean
+local function deviceFull(dir)
+    local cmd = string.format(
+        'df %s | awk \'{ print $5 }\' | tail -1',
+        dir
+    )
+
+    local out = capture(cmd, false)
+
+    ---@type integer?
+    local diskUsage
+
+    for v in string.gmatch(out, '%d+') do
+        diskUsage = tonumber(v)
+        if diskUsage == nil then
+            return false
+        end
+    end
+
+    local ret = false
+    if diskUsage >= minDiskSpace then
+        ret = true
+    end
+
+    return ret
+end
+
 ---check if file exists
 ---@param file string
 ---@return boolean
-local function exists(file)
+local function pathExists(file)
     local handle, _ = io.open(file, 'r')
     if handle == nil then
         return false
@@ -38,13 +78,25 @@ end
 ---@param track string
 ---@param dest string
 ---@param sleep integer
-local function yt_dlp(track, dest, sleep)
-    if not exists(dest) then
+local function ytDlp(track, dest, sleep)
+    if not pathExists(dest) then
         os.execute('mkdir ' .. dest)
     end
 
+    if deviceFull(dest) then
+        print(
+            string.format(
+                'error: %s is at >= %d%% capacity.. get a new storage device',
+                dest,
+                minDiskSpace
+            )
+        )
+
+        os.exit(1)
+    end
+
     local date = os.date("%Y%m%d")
-    if not exists('archive') then
+    if not pathExists('archive') then
         os.execute('mkdir archive')
     end
     local archive = './archive/' .. date
@@ -72,7 +124,7 @@ end
 ---@param file string
 ---@return table, integer, string
 local function readLines(file)
-    if not exists(file) then
+    if not pathExists(file) then
         return {}, 0, string.format('%s: No such file or directory', file)
     end
 
@@ -93,34 +145,6 @@ local function readLines(file)
     end
 
     return t, cnt, ""
-end
-
----check if directory is taking up too much space on its mountpoint
----@param dir string
----@return boolean
-local function atCapacity(dir)
-    local cmd = string.format(
-        'df %s | awk \'{ print $5 }\' | tail -1',
-        dir
-    )
-
-    local out = cmdOutputCapture(cmd, false)
-
-    local diskUsage
-    ---@type number
-    for v in string.gmatch(out, '%d+') do
-        diskUsage = tonumber(v)
-        if diskUsage == nil then
-            return false
-        end
-    end
-
-    local ret = false
-    if diskUsage >= capacity then
-        ret = true
-    end
-
-    return ret
 end
 
 local function main()
@@ -151,26 +175,9 @@ local function main()
         os.exit(1)
     end
 
-    if not exists(args.destination) then
-        print('error: ' .. args.destination .. ' does not exist')
-        os.exit(1)
-    end
-
-    if atCapacity(args.destination) then
-        print(
-            string.format(
-                'error: %s is at >= %d%% capacity.. get a new usb',
-                args.destination,
-                capacity
-            )
-        )
-
-        os.exit(1)
-    end
-
     local sleep = math.floor(1.05 ^ count)
     for _, track in pairs(tracks) do
-        yt_dlp(track, args.destination, sleep)
+        ytDlp(track, args.destination, sleep)
     end
 end
 
