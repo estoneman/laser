@@ -1,4 +1,5 @@
 -- src/main.lua
+local argparse = require("argparse")
 
 local capacity = 90
 
@@ -98,13 +99,14 @@ end
 ---@param dir string
 ---@return boolean
 local function atCapacity(dir)
-    local proc, _ = io.popen('df ' .. dir .. '| awk \'{ print $5 }\' | tail -1')
-    if proc == nil then
-        return false
-    end
+    local cmd = string.format(
+        'df %s | awk \'{ print $5 }\' | tail -1',
+        dir
+    )
+
+    local out = cmdOutputCapture(cmd, false)
 
     local diskUsage
-    local out = proc:read('a')
     ---@type number
     for v in string.gmatch(out, '%d+') do
         diskUsage = tonumber(v)
@@ -118,32 +120,57 @@ local function atCapacity(dir)
         ret = true
     end
 
-    proc:close()
-
     return ret
 end
 
 local function main()
-    local tracks, count, msg = readLines('./batch/20250221')
+    local parser = argparse("laser")
+        :description("Lua wrapper to yt-dlp")
+        :epilog("source can be found at: https://github.com/estoneman/laser.git")
+
+    parser:help_max_width(80)
+    parser:option("-f --batch-file")
+        :description("path to existing file containing track titles " ..
+                     "separated by a newline")
+        :target("batch_file")
+
+    parser:option("-d --destination")
+        :description("directory where the converted tracks should be stored")
+        :target("destination")
+
+    local args = parser:parse()
+
+    if args.batch_file == nil or args.destination == nil then
+        print(parser:get_help())
+        os.exit(1)
+    end
+
+    local tracks, count, msg = readLines(args.batch_file)
     if string.len(msg) > 0 then
         print(msg)
         os.exit(1)
     end
 
-    local dest = os.getenv('HOME') .. '/.local/share/rekordbox/usb/tracks/wav'
-    if not exists(dest) then
-        print('error: ' .. dest .. ' does not exist.. is it mounted?')
+    if not exists(args.destination) then
+        print('error: ' .. args.destination .. ' does not exist')
         os.exit(1)
     end
 
-    if atCapacity(dest) then
-        print('error: ' .. dest .. ' is at >=' .. capacity .. '% capacity.. get a new usb')
+    if atCapacity(args.destination) then
+        print(
+            string.format(
+                'error: %s is at >= %d%% capacity.. get a new usb',
+                args.destination,
+                capacity
+            )
+        )
+
         os.exit(1)
     end
 
     local sleep = math.floor(1.05 ^ count)
     for _, track in pairs(tracks) do
-        yt_dlp(track, dest, sleep)
+        yt_dlp(track, args.destination, sleep)
     end
 end
 
