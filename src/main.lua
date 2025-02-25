@@ -17,7 +17,7 @@ end
 ---capture command output into stdout
 ---@param cmd string
 ---@param raw boolean
-local function capture(cmd, raw)
+local function cmdCapture(cmd, raw)
     local proc = assert(io.popen(cmd, 'r'))
     local out = assert(proc:read('*a'))
 
@@ -40,7 +40,7 @@ local function deviceFull(dir)
         dir
     )
 
-    local out = capture(cmd, false)
+    local out = cmdCapture(cmd, false)
 
     ---@type integer?
     local diskUsage
@@ -75,10 +75,10 @@ local function pathExists(file)
 end
 
 ---invoke `yt-dlp` to convert YouTube video to a WAV file
----@param track string
+---@param url string
 ---@param dest string
 ---@param sleep integer
-local function ytDlp(track, dest, sleep)
+local function ytDlpSingle(url, dest, sleep)
     if not pathExists(dest) then
         os.execute('mkdir ' .. dest)
     end
@@ -106,16 +106,15 @@ local function ytDlp(track, dest, sleep)
             --sleep-interval %d \
             --audio-format wav \
             --output '%s/%%(id)s.wav' \
-            --match-filters 'duration > 150' \
             --download-archive %s.archive \
             --format bestaudio \
             --extract-audio \
             --add-metadata \
             --quiet \
-            "ytsearch:%s"
-    ]], sleep, dest, archive, track)
+            "%s"
+    ]], sleep, dest, archive, url)
 
-    print('converting ' .. track)
+    print('converting ' .. url)
 
     os.execute(cmd)
 end
@@ -145,6 +144,21 @@ local function readLines(file)
     end
 
     return t, cnt, ""
+end
+
+---extract YouTube URL given a track title
+---@param track string
+---@return string
+local function getUrl(track)
+    local cmd = string.format([[
+        yt-dlp \
+            --print-json \
+            --skip-download \
+            "ytsearch:%s" \
+        | jq --raw-output .webpage_url
+    ]], track)
+
+    return cmdCapture(cmd, false)
 end
 
 local function main()
@@ -177,7 +191,8 @@ local function main()
 
     local sleep = math.floor(1.05 ^ count)
     for _, track in pairs(tracks) do
-        ytDlp(track, args.destination, sleep)
+        local url = getUrl(track)
+        ytDlpSingle(url, args.destination, sleep)
     end
 end
 
