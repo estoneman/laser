@@ -74,11 +74,26 @@ local function pathExists(file)
     return true
 end
 
+---extract YouTube URL given a track title
+---@param track string
+---@return string
+local function getUrl(track)
+    local cmd = string.format([[
+        yt-dlp \
+            --print-json \
+            --skip-download \
+            "ytsearch:%s" \
+        | jq --raw-output .webpage_url
+    ]], track)
+
+    return cmdCapture(cmd, false)
+end
+
 ---invoke `yt-dlp` to convert YouTube video to a WAV file
----@param url string
+---@param track string
 ---@param dest string
 ---@param sleep integer
-local function ytDlpSingle(url, dest, sleep)
+local function ytDlpSingle(track, dest, sleep)
     if not pathExists(dest) then
         os.execute('mkdir ' .. dest)
     end
@@ -101,6 +116,9 @@ local function ytDlpSingle(url, dest, sleep)
     end
     local archive = './archive/' .. date
 
+    print('info: retrieving url of \'' .. track .. '\'')
+    local url = getUrl(track)
+
     local cmd = string.format([[
         yt-dlp \
             --sleep-interval %d \
@@ -114,7 +132,7 @@ local function ytDlpSingle(url, dest, sleep)
             "%s"
     ]], sleep, dest, archive, url)
 
-    print('converting ' .. url)
+    print('info: converting \'' .. track .. '\'')
 
     os.execute(cmd)
 end
@@ -144,21 +162,6 @@ local function readLines(file)
     end
 
     return t, cnt, ""
-end
-
----extract YouTube URL given a track title
----@param track string
----@return string
-local function getUrl(track)
-    local cmd = string.format([[
-        yt-dlp \
-            --print-json \
-            --skip-download \
-            "ytsearch:%s" \
-        | jq --raw-output .webpage_url
-    ]], track)
-
-    return cmdCapture(cmd, false)
 end
 
 local function main()
@@ -191,8 +194,7 @@ local function main()
 
     local sleep = math.floor(1.05 ^ count)
     for _, track in pairs(tracks) do
-        local url = getUrl(track)
-        ytDlpSingle(url, args.destination, sleep)
+        ytDlpSingle(track, args.destination, sleep)
     end
 end
 
