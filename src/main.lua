@@ -4,6 +4,9 @@ local argparse = require("argparse")
 ---@type integer?
 local minDiskSpace
 
+---@type table
+local threads = {}
+
 if not os.getenv('PERCENT_DISK_REM') then
     minDiskSpace = 90
 else
@@ -76,17 +79,32 @@ end
 
 ---extract YouTube URL given a track title
 ---@param track string
----@return string
+---@return string?
 local function getUrl(track)
+    local date = os.date("%Y%m%d")
+
+    if not pathExists('archive') then
+        os.execute('mkdir archive')
+    end
+
+    local archive = './archive/' .. date .. '.archive'
+
     local cmd = string.format([[
         yt-dlp \
+            --download-archive %s \
             --print-json \
             --skip-download \
             "ytsearch:%s" \
         | jq --raw-output .webpage_url
-    ]], track)
+    ]], archive, track)
 
-    return cmdCapture(cmd, false)
+    local out = cmdCapture(cmd, false)
+
+    if out == "" then
+        return nil
+    end
+
+    return out
 end
 
 ---invoke `yt-dlp` to convert YouTube video to a WAV file
@@ -110,21 +128,30 @@ local function ytDlpSingle(track, dest, sleep)
         os.exit(1)
     end
 
-    local date = os.date("%Y%m%d")
-    if not pathExists('archive') then
-        os.execute('mkdir archive')
-    end
-    local archive = './archive/' .. date
-
     print('info: retrieving url of \'' .. track .. '\'')
-    local url = getUrl(track)
+    -- local url = getUrl(track)
+    local co = coroutine.create(function(t)
+        local url = getUrl(t)
+        coroutine.yield(url)
+    end)
+
+    local _, url = coroutine.resume(co, track)
+
+    if url == nil then
+        print('warn: \'' .. track .. '\' has been downloaded')
+        return
+    end
+    print('debug: url found => ' .. url)
+
+    local date = os.date("%Y%m%d")
+    local archive = './archive/' .. date .. '.archive'
 
     local cmd = string.format([[
         yt-dlp \
             --sleep-interval %d \
             --audio-format wav \
             --output '%s/%%(id)s.wav' \
-            --download-archive %s.archive \
+            --download-archive %s \
             --format bestaudio \
             --extract-audio \
             --add-metadata \
@@ -134,7 +161,11 @@ local function ytDlpSingle(track, dest, sleep)
 
     print('info: converting \'' .. track .. '\'')
 
-    os.execute(cmd)
+    co = coroutine.create(function ()
+        os.execute(cmd)
+    end)
+
+    table.insert(threads, co)
 end
 
 ---read lines from file and return each line as its own in element in a table
@@ -164,38 +195,56 @@ local function readLines(file)
     return t, cnt, ""
 end
 
-local function main()
-    local parser = argparse("laser")
-        :description("Lua wrapper to yt-dlp")
-        :epilog("source can be found at: https://github.com/estoneman/laser.git")
+local function tableLen(t)
+    local count = 0
+    for _ in pairs(t) do count = count + 1 end
+    return count
+end
 
-    parser:help_max_width(80)
-    parser:option("-f --batch-file")
-        :description("path to existing file containing track titles " ..
-                     "separated by a newline")
-        :target("batch_file")
-
-    parser:option("-d --destination")
-        :description("directory where the converted tracks should be stored")
-        :target("destination")
-
-    local args = parser:parse()
-
-    if args.batch_file == nil or args.destination == nil then
-        print(parser:get_help())
-        os.exit(1)
-    end
-
-    local tracks, count, msg = readLines(args.batch_file)
-    if string.len(msg) > 0 then
-        print(msg)
-        os.exit(1)
-    end
-
-    local sleep = math.floor(1.05 ^ count)
-    for _, track in pairs(tracks) do
-        ytDlpSingle(track, args.destination, sleep)
+local function dispatcher()
+    while true do
+        local n = tableLen(threads)
+        if n == 0 then break end
+        for i=1,n do
+            local _, res = coroutine.resume(threads[i])
+            if not res then
+                table.remove(threads, i)
+                break
+            end
+        end
     end
 end
 
-main()
+local parser = argparse("laser")
+    :description("Lua wrapper to yt-dlp")
+    :epilog("source can be found at: https://github.com/estoneman/laser.git")
+
+parser:help_max_width(80)
+parser:option("-f --batch-file")
+    :description("path to existing file containing track titles " ..
+                 "separated by a newline")
+    :target("batch_file")
+
+parser:option("-d --destination")
+    :description("directory where the converted tracks should be stored")
+    :target("destination")
+
+local args = parser:parse()
+
+if args.batch_file == nil or args.destination == nil then
+    print(parser:get_help())
+    os.exit(1)
+end
+
+local tracks, count, msg = readLines(args.batch_file)
+if string.len(msg) > 0 then
+    print(msg)
+    os.exit(1)
+end
+
+local sleep = math.floor(1.05 ^ count)
+for _, track in pairs(tracks) do
+    ytDlpSingle(track, args.destination, sleep)
+end
+
+dispatcher()
