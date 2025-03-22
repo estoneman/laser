@@ -89,6 +89,8 @@ local function getUrl(track)
 
     local archive = './archive/' .. date .. '.archive'
 
+    track = string.gsub(track, '"', '\\"')
+
     local cmd = string.format([[
         yt-dlp \
             --download-archive %s \
