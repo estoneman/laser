@@ -1,11 +1,10 @@
 -- src/main.lua
 local argparse = require("argparse")
+local uv = require('luv')
 
 ---@type integer?
 local minDiskSpace
-
----@type table
-local threads = {}
+local maxConcurrency = 20
 
 if not os.getenv('PERCENT_DISK_REM') then
     minDiskSpace = 90
@@ -113,7 +112,8 @@ end
 ---@param track string
 ---@param dest string
 ---@param sleep integer
-local function ytDlpSingle(track, dest, sleep)
+---@param onExit function
+local function ytDlpSingle(track, dest, sleep, onExit)
     if not pathExists(dest) then
         os.execute('mkdir ' .. dest)
     end
@@ -131,13 +131,7 @@ local function ytDlpSingle(track, dest, sleep)
     end
 
     print('info: retrieving url of \'' .. track .. '\'')
-    -- local url = getUrl(track)
-    local co = coroutine.create(function(t)
-        local url = getUrl(t)
-        coroutine.yield(url)
-    end)
-
-    local _, url = coroutine.resume(co, track)
+    local url = getUrl(track)
 
     if url == nil then
         print('warn: \'' .. track .. '\' has been downloaded')
@@ -148,26 +142,40 @@ local function ytDlpSingle(track, dest, sleep)
     local date = os.date("%Y%m%d")
     local archive = './archive/' .. date .. '.archive'
 
-    local cmd = string.format([[
-        yt-dlp \
-            --sleep-interval %d \
-            --audio-format wav \
-            --output '%s/%%(id)s.wav' \
-            --download-archive %s \
-            --format bestaudio \
-            --extract-audio \
-            --add-metadata \
-            --quiet \
-            "%s"
-    ]], sleep, dest, archive, url)
-
     print('info: converting \'' .. track .. '\'')
 
-    co = coroutine.create(function ()
-        os.execute(cmd)
-    end)
+    local args = {
+        "--sleep-interval", tostring(sleep),
+        "--audio-format", "wav",
+        "--output", dest .. "/%(id)s.wav",
+        "--download-archive", archive,
+        "--format", "bestaudio",
+        "--extract-audio",
+        "--add-metadata",
+        "--quiet",
+        url
+    }
 
-    table.insert(threads, co)
+    local handle
+    local stderr = uv.new_pipe()
+    handle, _ = uv.spawn("yt-dlp", {
+        args = args,
+        stdio = { nil, nil, stderr }
+    }, function(code)
+        if code == 0 then
+            onExit(true)
+        else
+            uv.read_start(stderr, function(err, data)
+                assert(not err, err)
+                if data then
+                    print('stderr chunk', data)
+                end
+            end)
+            onExit(false)
+        end
+
+        handle:close()
+    end)
 end
 
 ---read lines from file and return each line as its own in element in a table
@@ -197,24 +205,12 @@ local function readLines(file)
     return t, cnt, ""
 end
 
+---find length of table
+---@param t table
 local function tableLen(t)
     local count = 0
-    for _ in pairs(t) do count = count + 1 end
+    for _, _ in pairs(t) do count = count + 1 end
     return count
-end
-
-local function dispatcher()
-    while true do
-        local n = tableLen(threads)
-        if n == 0 then break end
-        for i=1,n do
-            local _, res = coroutine.resume(threads[i])
-            if not res then
-                table.remove(threads, i)
-                break
-            end
-        end
-    end
 end
 
 local parser = argparse("laser")
@@ -244,9 +240,25 @@ if string.len(msg) > 0 then
     os.exit(1)
 end
 
-local sleep = math.floor(1.05 ^ count)
-for _, track in pairs(tracks) do
-    ytDlpSingle(track, args.destination, sleep)
+if tableLen(tracks) > maxConcurrency then
+    print(
+        string.format(
+            'error: currently, this downloader supports downloading up to %d tracks',
+            maxConcurrency
+        )
+    )
+    os.exit(1)
 end
 
-dispatcher()
+local sleep = math.floor(1.05 ^ count)
+for _, track in pairs(tracks) do
+    ytDlpSingle(track, args.destination, sleep, function(success)
+        if success then
+            print(string.format("info: '%s' successfully converted", track))
+        else
+            print(string.format("error: '%s' could not be converted", track))
+        end
+    end)
+end
+
+uv.run()
