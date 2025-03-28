@@ -5,6 +5,7 @@ local uv = require('luv')
 ---@type integer?
 local minDiskSpace
 local maxConcurrency = 20
+local date = os.date("%Y%m%d")
 
 if not os.getenv('PERCENT_DISK_REM') then
     minDiskSpace = 90
@@ -38,7 +39,7 @@ end
 ---@return boolean
 local function deviceFull(dir)
     local cmd = string.format(
-        'df %s | awk \'{ print $5 }\' | tail -1',
+        "df %s | awk '{ print $5 }' | tail -1",
         dir
     )
 
@@ -80,8 +81,6 @@ end
 ---@param track string
 ---@return string?
 local function getUrl(track)
-    local date = os.date("%Y%m%d")
-
     if not pathExists('archive') then
         os.execute('mkdir archive')
     end
@@ -95,7 +94,7 @@ local function getUrl(track)
             --download-archive %s \
             --print-json \
             --skip-download \
-            "ytsearch:%s" \
+            ytsearch:%q \
         | jq --raw-output .webpage_url
     ]], archive, track)
 
@@ -139,7 +138,6 @@ local function ytDlpSingle(track, dest, sleep, onExit)
     end
     print('debug: url found => ' .. url)
 
-    local date = os.date("%Y%m%d")
     local archive = './archive/' .. date .. '.archive'
 
     print('info: converting \'' .. track .. '\'')
@@ -165,18 +163,22 @@ local function ytDlpSingle(track, dest, sleep, onExit)
         if code == 0 then
             onExit(true)
         else
-            uv.read_start(stderr, function(err, data)
-                assert(not err, err)
-                if data then
-                    print('stderr chunk', data)
-                end
-            end)
             onExit(false)
         end
 
         print(string.format('debug: closing process (pid=%d)', pid))
         handle:close()
     end)
+
+    uv.read_start(stderr, function(err, data)
+        assert(not err, err)
+        if data then
+            print('stderr chunk', data)
+        end
+    end)
+
+    stderr:close()
+
     print(string.format('debug: started process (pid=%d)', pid))
 end
 
@@ -207,14 +209,6 @@ local function readLines(file)
     return t, cnt, ""
 end
 
----find length of table
----@param t table
-local function tableLen(t)
-    local count = 0
-    for _, _ in pairs(t) do count = count + 1 end
-    return count
-end
-
 local parser = argparse("laser")
     :description("Lua wrapper to yt-dlp")
     :epilog("source can be found at: https://github.com/estoneman/laser.git")
@@ -242,7 +236,7 @@ if string.len(msg) > 0 then
     os.exit(1)
 end
 
-if tableLen(tracks) > maxConcurrency then
+if #tracks > maxConcurrency then
     print(
         string.format(
             'error: currently, this downloader supports downloading up to %d tracks',
@@ -262,5 +256,21 @@ for _, track in pairs(tracks) do
         end
     end)
 end
+
+local signal = uv.new_signal()
+
+uv.signal_start(signal, "sigint", function(signame)
+    uv.signal_stop(signal)
+
+    print("fatal: got " .. signame .. ", shutting down")
+
+    uv.walk(function (handle)
+        if not handle:is_closing() then
+            handle:close()
+        end
+    end)
+
+    uv.stop()
+end)
 
 uv.run()
