@@ -142,10 +142,11 @@ local function ytDlpSingle(track, dest, sleep, onExit)
 
     print('info: converting \'' .. track .. '\'')
 
+    local format = "flac"
     local args = {
         "--sleep-interval", tostring(sleep),
-        "--audio-format", "wav",
-        "--output", dest .. "/%(id)s.wav",
+        "--audio-format", format,
+        "--output", dest .. "/%(id)s." .. format,
         "--download-archive", archive,
         "--format", "bestaudio",
         "--extract-audio",
@@ -269,7 +270,7 @@ uv.signal_start(signal, "sigint", function(signame)
             print(
                 string.format(
                     'debug: closing process (pid=%d)',
-                    handle:process_get_pid()
+                    uv.proces_get_pid(handle)
                 )
             )
             handle:close()
