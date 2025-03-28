@@ -156,9 +156,9 @@ local function ytDlpSingle(track, dest, sleep, onExit)
         url
     }
 
-    local handle
+    local handle, pid
     local stderr = uv.new_pipe()
-    handle, _ = uv.spawn("yt-dlp", {
+    handle, pid = uv.spawn("yt-dlp", {
         args = args,
         stdio = { nil, nil, stderr }
     }, function(code)
@@ -174,8 +174,10 @@ local function ytDlpSingle(track, dest, sleep, onExit)
             onExit(false)
         end
 
+        print(string.format('debug: closing process (pid=%d)', pid))
         handle:close()
     end)
+    print(string.format('debug: started process (pid=%d)', pid))
 end
 
 ---read lines from file and return each line as its own in element in a table
