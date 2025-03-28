@@ -266,6 +266,12 @@ uv.signal_start(signal, "sigint", function(signame)
 
     uv.walk(function (handle)
         if not handle:is_closing() then
+            print(
+                string.format(
+                    'debug: closing process (pid=%d)',
+                    handle:process_get_pid()
+                )
+            )
             handle:close()
         end
     end)
